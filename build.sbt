@@ -1,4 +1,4 @@
-val ZIOVersion = "2.0.0"
+val ZIOVersion = "2.0.3"
 
 lazy val root = project
   .in(file("."))
@@ -25,7 +25,7 @@ libraryDependencies ++= Seq(
   "dev.zio" %% "zio-test"     % ZIOVersion % "test",
   "dev.zio" %% "zio-test-sbt" % ZIOVersion % "test",
   // URL parsing
-  "io.lemonlabs" %% "scala-uri" % "4.0.2"
+  "io.lemonlabs" %% "scala-uri" % "4.0.3"
 )
 
 testFrameworks := Seq(new TestFramework("zio.test.sbt.ZTestFramework"))
