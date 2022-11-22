@@ -1,4 +1,4 @@
-package net.degoes.zio
+package course.zio
 
 object Dictionary {
   val Dictionary = List(

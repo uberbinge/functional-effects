@@ -31,7 +31,7 @@ Good working knowledge of Scala, including familiarity with immutable data, patt
 
 ## From the UI
 
-1. Download the repository as a [zip archive](https://github.com/jdegoes/functional-effects/archive/master.zip).
+1. Download the repository as a [zip archive](https://github.com/kitlangton/functional-effects/archive/master.zip).
 2. Unzip the archive, usually by double-clicking on the file.
 3. Configure the source code files in the IDE or text editor of your choice.
 
@@ -42,7 +42,7 @@ Good working knowledge of Scala, including familiarity with immutable data, patt
 2. Clone the repository.
 
     ```bash
-    git clone https://github.com/jdegoes/functional-effects
+    git clone https://github.com/kitlangton/functional-effects
     ```
 5. Launch project provided `sbt`.
 

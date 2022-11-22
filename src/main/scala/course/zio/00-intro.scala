@@ -1,4 +1,4 @@
-package net.degoes.zio
+package course.zio
 
 import zio._
 
@@ -132,7 +132,7 @@ object SuccessEffect extends ZIOAppDefault {
     * World".
     */
   val run =
-    ???
+    ZIO.succeed("Hello World")
 }
 
 object HelloWorld extends ZIOAppDefault {

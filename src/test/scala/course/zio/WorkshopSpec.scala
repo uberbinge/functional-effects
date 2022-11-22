@@ -1,8 +1,8 @@
-package net.degoes.zio
+package course.zio
 
 import zio._
 import zio.test._
-import zio.test.TestAspect.{ ignore, timeout }
+import zio.test.TestAspect.{ignore, timeout}
 
 object WorkshopSpec extends ZIOSpecDefault {
 

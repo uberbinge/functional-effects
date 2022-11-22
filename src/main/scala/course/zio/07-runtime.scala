@@ -1,4 +1,4 @@
-package net.degoes.zio
+package course.zio
 
 import zio._
 import scala.concurrent.ExecutionContext
