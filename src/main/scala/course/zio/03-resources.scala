@@ -110,6 +110,7 @@ object SourceScoped extends ZIOAppDefault {
     def execute[T](f: Source => T): ZIO[Any, IOException, T] =
       ZIO.attemptBlockingIO(f(source))
   }
+
   object ZSource {
 
     /** EXERCISE
@@ -137,7 +138,8 @@ object SourceScoped extends ZIOAppDefault {
     * which resources are open), read the contents of the specified file into a
     * `String`.
     */
-  def readFile(file: String): ZIO[Any, IOException, String] = ???
+  def readFile(file: String): ZIO[Any, IOException, String] =
+    ???
 
   /** EXERCISE
     *
@@ -153,9 +155,10 @@ object CatIncremental extends ZIOAppDefault {
   import java.io.{FileInputStream, IOException, InputStream}
 
   final case class FileHandle private (private val is: InputStream) {
-    final def close: ZIO[Any, IOException, Unit] = ZIO.attemptBlockingIO(is.close())
+    def close: ZIO[Any, IOException, Unit] =
+      ZIO.attemptBlockingIO(is.close())
 
-    final def read: ZIO[Any, IOException, Option[Chunk[Byte]]] =
+    def read: ZIO[Any, IOException, Option[Chunk[Byte]]] =
       ZIO.attemptBlockingIO {
         val array = Array.ofDim[Byte](1024)
         val len   = is.read(array)
@@ -187,8 +190,8 @@ object CatIncremental extends ZIOAppDefault {
   /** EXERCISE
     *
     * Implement an incremental version of the `cat` utility, using
-    * `ZIO#acquireRelease` or `ZManaged` to ensure the file is closed in the
-    * event of error or interruption.
+    * `ZIO#acquireRelease` to ensure the file is closed in the event of error or
+    * interruption.
     */
   val run =
     getArgs.map(_.toList).flatMap {
@@ -213,7 +216,8 @@ object AddFinalizer extends ZIOAppDefault {
     * version you implement need not be safe in the presence of interruption,
     * but it should be safe in the presence of errors.
     */
-  def acquireRelease[R, E, A](acquire: ZIO[R, E, A])(release: A => ZIO[R, Nothing, Any]): ZIO[R with Scope, E, A] = ???
+  def acquireRelease[R, E, A](acquire: ZIO[R, E, A])(release: A => ZIO[R, Nothing, Any]): ZIO[R with Scope, E, A] =
+    ???
 
   val run =
     for {
