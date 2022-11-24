@@ -1,6 +1,8 @@
 package course.zio
 
 import zio._
+import zio.stream.ZStream
+
 import java.text.NumberFormat
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
@@ -291,7 +293,7 @@ object CatIncremental extends ZIOAppDefault {
 
     def read: ZIO[Any, IOException, Option[Chunk[Byte]]] =
       ZIO.attemptBlockingIO {
-        val array = Array.ofDim[Byte](1024)
+        val array = Array.ofDim[Byte](8)
         val len   = is.read(array)
         if (len < 0) None
         else Some(Chunk.fromArray(array).take(len))
@@ -306,8 +308,12 @@ object CatIncremental extends ZIOAppDefault {
     * HINT: `ZIO.acquireRelease` is the easiest way to do this!
     */
   object FileHandle {
-    final def open(file: String): ZIO[Any, IOException, FileHandle] =
-      ZIO.attemptBlockingIO(new FileHandle(new FileInputStream(file)))
+    //    final def open(file: String): ZIO[Scope, IOException, FileHandle] =
+
+    final def open(file: String): ZIO[Scope, IOException, FileHandle] =
+      ZIO.acquireRelease(ZIO.attemptBlockingIO(new FileHandle(new FileInputStream(file)))) { fh =>
+        fh.close.orDie
+      }
   }
 
   /** EXERCISE
@@ -315,8 +321,35 @@ object CatIncremental extends ZIOAppDefault {
     * Implement an incremental version of `cat` that pulls a chunk of bytes at a
     * time, stopping when there are no more chunks left.
     */
+//  private def cat(fh: FileHandle): ZIO[Any with Scope, IOException, Unit] =
+
   def cat(fh: FileHandle): ZIO[Any, IOException, Unit] =
-    ???
+    fh.read
+      .tapSome { case Some(bytes) =>
+        Console.print(bytes.asString)
+      }
+      .repeatWhile(_.nonEmpty)
+      .unit
+  //    ZStream
+//      .repeatZIO(fh.read) // Stream[Option[Chunk[Byte]]]
+//      .collectWhileSome   // Chunk[Byte]
+//      .foreach { chunk =>
+//        Console.print(chunk.asString(StandardCharsets.UTF_8))
+//      }
+  //    fh.read
+//      .flatMap {
+//        case Some(value) => Console.print(value.asString) *> cat(fh)
+//        case None        => ZIO.unit
+//      }
+//      .refineToOrDie[IOException]
+  //    (for {
+//      chunks <- fh.read.map(_.map(_.asString))
+//      _ <- ZIO.whenCase(chunks) { case Some(ch) =>
+//             Console.printLine(ch)
+//           }
+//    } yield chunks)
+//      .repeatUntil(_.isEmpty)
+//      .unit
 
   /** EXERCISE
     *
@@ -332,8 +365,12 @@ object CatIncremental extends ZIOAppDefault {
           * Open the specified file, safely create and use a file handle to
           * incrementally dump the contents of the file to standard output.
           */
-        ???
-
+        ZIO.scoped {
+          for {
+            fileHandle <- FileHandle.open(file)
+            _          <- cat(fileHandle)
+          } yield ()
+        }
       case _ => Console.printLine("Usage: cat <file>")
     }
 }
@@ -348,7 +385,12 @@ object AddFinalizer extends ZIOAppDefault {
     * but it should be safe in the presence of errors.
     */
   def acquireRelease[R, E, A](acquire: ZIO[R, E, A])(release: A => ZIO[R, Nothing, Any]): ZIO[R with Scope, E, A] =
-    ???
+    ZIO.uninterruptible {
+      for {
+        a <- acquire
+        _ <- ZIO.addFinalizer(release(a))
+      } yield a
+    }
 
   val run =
     for {

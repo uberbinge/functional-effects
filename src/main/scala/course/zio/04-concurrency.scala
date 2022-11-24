@@ -1,13 +1,18 @@
 package course.zio
 
-import zio._
+import zio.{RuntimeFlags => _, _}
 
+import java.io.IOException
 import java.util.UUID
 
+// - Work Stealing
+// - How is Dispatching
 object ForkJoin extends ZIOAppDefault {
 
-  val printer =
-    Console.printLine(".").repeatN(10)
+  val printer: ZIO[Any, IOException, String] =
+    ZIO.uninterruptible {
+      Console.print(".").delay(200.millis).repeatN(10).as("Done")
+    }
 
   /** EXERCISE
     *
@@ -15,14 +20,30 @@ object ForkJoin extends ZIOAppDefault {
     * out a message, "Forked", then join the fiber using `Fiber#join`, and
     * finally, print out a message "Joined".
     */
+  // 1
+  // main fiber = printer -- - - -- - - - - > debug
+  //
+  // 2
+  // main fiber = printer.fork -> debug -> await
+  // side fiber =             |           . . . . . . . . . . . . .
+  // TODO: Explore more what yield does w/r/t the fiber we're running on
   val run =
-    printer
+    for {
+      _ <- ZIO.fiberId.debug
+      _ <- ZIO.fiberId.debug.fork
+      _ <- ZIO.sleep(1.second)
+    } yield ()
 }
 
 object ForkInterrupt extends ZIOAppDefault {
 
   val infinitePrinter =
     Console.print(".").delay(200.millis).forever
+
+  private val print2Seconds: ZIO[Any, Nothing, Unit] = for {
+    _ <- infinitePrinter.forkDaemon
+    _ <- ZIO.sleep(2.seconds)
+  } yield ()
 
   /** EXERCISE
     *
@@ -31,8 +52,16 @@ object ForkInterrupt extends ZIOAppDefault {
     * milliseconds, then interrupt the fiber using `Fiber#interrupt`, and
     * finally, print out a message "Interrupted".
     */
+
+  // TODO: Why? Does forkDaemon get interrupted? Does it?
   val run =
-    infinitePrinter *> ZIO.sleep(10.millis)
+    for {
+      _ <- ZIO.uninterruptible(print2Seconds).fork
+      _ <- ZIO.sleep(500.millis)
+//      _ <- ZIO.sleep(2.seconds) _ <- ZIO.debug("It should stop now")
+//      _ <- ZIO.sleep(2.seconds)
+//      _ <- ZIO.debug("Did it stop?")
+    } yield ()
 }
 
 object ParallelFib extends ZIOAppDefault {
@@ -41,13 +70,15 @@ object ParallelFib extends ZIOAppDefault {
     *
     * Rewrite this implementation to compute nth fibonacci number in parallel.
     */
+
+  val printHello = ZIO.succeed(println("Hello"))
+
   def slowFib(n: Int): UIO[BigInt] = {
     def loop(n: Int, original: Int): UIO[BigInt] =
       if (n <= 1)
         ZIO.succeed(BigInt(n)).delay(1.second)
       else
-        ZIO.debug(s"slowFib($n)") *>
-          loop(n - 1, original).zipWith(loop(n - 2, original))(_ + _)
+        loop(n - 1, original).zipWith(loop(n - 2, original))(_ + _)
 
     loop(n, n)
   }
@@ -65,7 +96,8 @@ object ParallelFib extends ZIOAppDefault {
 
 object TimeoutExample extends ZIOAppDefault {
   def fib(n: Int): UIO[Int] =
-    if (n <= 1) ZIO.succeed(n)
+    if (n <= 1)
+      ZIO.succeed(n)
     else
       ZIO.suspendSucceed {
         fib(n - 1).zipWith(fib(n - 2))(_ + _)
@@ -78,7 +110,7 @@ object TimeoutExample extends ZIOAppDefault {
     *
     * Print out a message if it timed out.
     */
-  lazy val run = fib(20)
+  lazy val run = fib(30).timeout(1000.millis).someOrElse(999).debug
 }
 
 object RaceExample extends ZIOAppDefault {
@@ -93,7 +125,7 @@ object RaceExample extends ZIOAppDefault {
     * Use `ZIO#race` to race the preceding two tasks and print out the winning
     * success value.
     */
-  lazy val run = ???
+  lazy val run = (loadFromCache.onInterrupt(ZIO.debug("OOPS")) race loadFromDB).debug
 }
 
 object AlarmAppImproved extends ZIOAppDefault {
@@ -126,13 +158,29 @@ object AlarmAppImproved extends ZIOAppDefault {
     * out a wakeup alarm message, like "Time to wakeup!!!".
     */
   val run =
-    ???
+    for {
+      duration <- getAlarmDuration
+      _        <- Console.printLine(".").delay(1.second).forever.fork
+      _        <- ZIO.sleep(duration)
+      _        <- Console.printLine("Time to wakeup!!!")
+    } yield ()
+}
+
+final case class Config()
+final case class Database()
+
+final case class Service(config: Config, db: Database, ref: Ref[Int])
+
+object Service {
+  val layer: ZLayer[Database with Config, Nothing, Service] =
+    ZLayer(Ref.make(10)) >>>
+      ZLayer.fromFunction(Service.apply _)
 }
 
 object ParallelZip extends ZIOAppDefault {
 
   def fib(n: Int): UIO[Int] =
-    if (n <= 1) ZIO.succeed(n)
+    if (n <= 1) ZIO.succeed(n).delay(1.second)
     else
       ZIO.suspendSucceed {
         (fib(n - 1) zipWith fib(n - 2))(_ + _)
@@ -144,7 +192,7 @@ object ParallelZip extends ZIOAppDefault {
     * the result.
     */
   val run =
-    ???
+    (fib(3).debug("DONE ONE") zipPar fib(3).debug("DONE TWO")).debug
 }
 
 /** The Ref data type is a way for ZIO effects to utilize state. It is basically
@@ -182,16 +230,48 @@ object RefExample extends ZIOAppDefault {
     * the point is inside the circle then increment `PiState#inside`. In any
     * case, increment `PiState#total`.
     */
-  def addPoint(point: (Double, Double), piState: PiState): UIO[Unit] =
-    ???
+  def addPoint(point: (Double, Double), piState: PiState): UIO[Unit] = {
+    val (x, y) = point
+    for {
+      _ <- piState.total.update(_ + 1)
+      _ <- piState.inside.update(_ + 1).when(insideCircle(x, y))
+    } yield ()
+  }
+
+  def shootDartsForever(state: PiState): UIO[Unit] =
+    (for {
+      p <- randomPoint
+      _ <- addPoint(p, state)
+      _ <- ZIO.fiberId.debug("HEY!")
+      _ <- ZIO.sleep(1.second)
+    } yield ()).forever
+      .onInterrupt(ZIO.debug("YOU KILLED ME"))
+
+  def printEstimate(state: PiState): UIO[Unit] =
+    (for {
+      inside <- state.inside.get
+      total  <- state.total.get
+      _      <- ZIO.debug(s"ESTIMATE: ${estimatePi(inside, total)}")
+      _      <- ZIO.sleep(500.millis)
+    } yield ()).forever
 
   /** EXERCISE
     *
     * Build a multi-fiber program that estimates the value of `pi`. Print out
     * ongoing estimates continuously until the estimation is complete.
     */
-  val run =
-    ???
+  val run = for {
+    insideRef <- Ref.make(0L)
+    totalRef  <- Ref.make(0L)
+    state      = PiState(insideRef, totalRef)
+    fiber     <- ZIO.forkAll(List.fill(4)(shootDartsForever(state)))
+    _         <- fiber.interrupt
+    _         <- printEstimate(state).fork
+    _         <- Console.readLine("Enter to exit estimation")
+    inside    <- insideRef.get
+    total     <- totalRef.get
+    _         <- Console.printLine(s"Estimate for PI: ${estimatePi(inside, total)}")
+  } yield ()
 }
 
 object InteractiveExerciseToolExample extends ZIOAppDefault {
@@ -209,7 +289,7 @@ object InteractiveExerciseToolExample extends ZIOAppDefault {
   }
 
   object State {
-    val empty = State(Map.empty)
+    val empty: State = State(Map.empty)
   }
 
   trait SubmissionService {
@@ -219,7 +299,7 @@ object InteractiveExerciseToolExample extends ZIOAppDefault {
   }
 
   final case class SubmissionServiceVar() extends SubmissionService {
-    var state = State.empty
+    var state: State = State.empty
 
     def addSubmission(userId: UserId, submission: Submission): UIO[Unit] =
       ZIO.succeed {
@@ -237,15 +317,20 @@ object InteractiveExerciseToolExample extends ZIOAppDefault {
       }
   }
 
-  final case class SubmissionServiceLive(ref: Ref[State]) {
+  final case class SubmissionServiceLive(ref: Ref[State]) extends SubmissionService {
     def addSubmission(userId: UserId, submission: Submission): UIO[Unit] =
-      ???
+      ref.update(_.submit(userId, submission))
 
     def clearAll: UIO[Unit] =
-      ???
+      ref.set(State.empty)
 
     def submissionCount: UIO[Int] =
-      ???
+      ref.get.map(_.size)
+  }
+
+  object SubmissionServiceLive {
+    val make: ZIO[Any, Nothing, SubmissionService] =
+      Ref.make(State.empty).map(SubmissionServiceLive(_))
   }
 
   val exampleCode =
@@ -258,17 +343,33 @@ object InteractiveExerciseToolExample extends ZIOAppDefault {
     } yield (userId, Submission(code))
 
   val run =
-    ???
+    for {
+      service <- SubmissionServiceLive.make
+      submit = randomUserSubmission.flatMap { //
+                 case (uid, submission) => service.addSubmission(uid, submission)
+               }
+      _ <- ZIO.foreachParDiscard(1 to 100_000)(_ => submit)
+      _ <- service.submissionCount.debug
+    } yield ()
 }
 
 object PromiseExample extends ZIOAppDefault {
+
+  val readInt: ZIO[Any, Nothing, Int] = Console
+    .readLine("Gimme number")
+    .orDie
+    .map(_.toInt)
 
   /** EXERCISE
     *
     * Do some computation that produces an integer. When you're done, complete
     * the promise with `Promise#succeed`.
     */
-  def doCompute(result: Promise[Nothing, Int]): UIO[Unit] = ???
+  def doCompute(promise: Promise[String, Int]): UIO[Unit] =
+    readInt.flatMap { int =>
+      if (int == 563) promise.fail("I hate this number")
+      else promise.succeed(int)
+    }.unit
 
   /** EXERCISE
     *
@@ -276,7 +377,15 @@ object PromiseExample extends ZIOAppDefault {
     * it can use, and then wait for the promise to be completed, using
     * `Promise#await`.
     */
-  lazy val waitForCompute: ZIO[Any, Nothing, Unit] = ???
+  // TODO: Can I name my fibers?
+  lazy val waitForCompute: ZIO[Any, String, Unit] =
+    for {
+      promise <- Promise.make[String, Int]
+      _       <- doCompute(promise).fork
+      _       <- ZIO.debug(s"HRMM")
+      int     <- promise.await
+      _       <- ZIO.debug(s"I GOT AN INT: $int")
+    } yield ()
 
   val run =
     waitForCompute
@@ -298,15 +407,75 @@ object FiberRefExample extends ZIOAppDefault {
 
   val run =
     for {
-      ref   <- FiberRef.make[Int](0, identity(_), _ + _)
+      ref   <- FiberRef.make[Int](0, fork = _ + 100, join = _ + _)
       _     <- ref.get.debug("parent before fork")
       child <- makeChild(ref).fork
+      _     <- ZIO.sleep(1.second)
       _     <- ref.get.debug("parent after fork")
-      _     <- child.join
-      _     <- ref.get.debug("parent after join")
+      _     <- ref.update(_ + 5)
+      _     <- ref.get.debug("parent before join")
+      // TODO: how to get fiber ref value from interrupted children
+      _ <- child.join.catchAllCause(_ => ZIO.debug("WHOOS"))
+      _ <- ref.get.debug("parent after join")
     } yield ()
 }
 
+trait Logger {
+  def log(message: String): UIO[Unit]
+  def annotate[R, E, A](key: String, value: String)(zio: ZIO[R, E, A]): ZIO[R, E, A]
+}
+
+final case class LoggerLive(ref: FiberRef[Map[String, String]]) extends Logger {
+  override def log(message: String): UIO[Unit] =
+    for {
+      map    <- ref.get
+      context = map.mkString(",")
+      _      <- Console.printLine(s"[$context] $message").orDie
+    } yield ()
+
+  override def annotate[R, E, A](key: String, value: String)(zio: ZIO[R, E, A]): ZIO[R, E, A] =
+    ref.locallyWith(_.updated(key, value))(zio)
+}
+
+object LoggerLive {
+  val layer: ULayer[Logger] = ZLayer.scoped {
+    FiberRef.make(Map.empty[String, String]).map(LoggerLive(_))
+  }
+}
+
+object Logger {
+  def log(message: String): ZIO[Logger, Nothing, Unit] =
+    ZIO.serviceWithZIO[Logger](_.log(message))
+
+  def annotate[R, E, A](key: String, value: String)(zio: ZIO[R, E, A]): ZIO[R with Logger, E, A] =
+    ZIO.serviceWithZIO[Logger](_.annotate(key, value)(zio))
+}
+
 object CustomLoggerWithSpans extends ZIOAppDefault {
-  val run = ???
+  def otherOp =
+    for {
+      _ <- Logger.log("OTHER")
+    } yield ()
+
+  def someImportantOperation =
+    for {
+      _   <- ZIO.debug("I am very important")
+      _   <- Logger.log("Look at me be important over here please")
+      int <- Random.nextIntBounded(10)
+      _   <- Logger.annotate("another thing", int.toString)(otherOp)
+      _   <- Logger.log("Look at me be important over here please")
+    } yield ()
+
+  val program =
+    for {
+      _ <- Logger.log("I am logging")
+      _ <- Logger.annotate("important?", "YES")(someImportantOperation) zipPar
+             Logger.annotate("important?", "NO")(someImportantOperation) zipPar
+             Logger.annotate("important?", "Maybe")(someImportantOperation) zipPar
+             Logger.annotate("cool?", "sure")(someImportantOperation)
+      _ <- Logger.log("I am done")
+    } yield ()
+
+  val run = program.provide(LoggerLive.layer)
+
 }
