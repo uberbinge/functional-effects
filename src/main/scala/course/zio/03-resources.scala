@@ -20,7 +20,10 @@ object Cat extends ZIOAppDefault {
     * helpful to use the `getScalaSource` helper method defined above.
     */
   def readFile(file: String): ZIO[Any, IOException, String] =
-    ???
+    ZIO
+      .attemptBlockingIO {
+        getScalaSource(file).mkString
+      }
 
   /** EXERCISE
     *
@@ -28,7 +31,16 @@ object Cat extends ZIOAppDefault {
     * contents of the specified file to standard output.
     */
   val run =
-    ???
+    for {
+      args     <- getArgs
+      contents <- readFile(args.head)
+      _        <- Console.printLine(contents)
+    } yield ()
+}
+
+object Object {
+  def main(args: Array[String]): Unit =
+    println(s"Got args: ${args.toList}")
 }
 
 object CatEnsuring extends ZIOAppDefault {
@@ -40,7 +52,8 @@ object CatEnsuring extends ZIOAppDefault {
     ZIO.attemptBlockingIO(Source.fromFile(file))
 
   def close(source: Source): ZIO[Any, IOException, Unit] =
-    ZIO.attemptBlockingIO(source.close())
+    ZIO.debug("CLOSING!") *>
+      ZIO.attemptBlockingIO(source.close())
 
   /** EXERCISE
     *
@@ -52,7 +65,7 @@ object CatEnsuring extends ZIOAppDefault {
       .uninterruptible {
         for {
           source   <- open(file)
-          contents <- ZIO.attempt(source.getLines().mkString("\n"))
+          contents <- ZIO.attempt(source.mkString).ensuring(close(source).orDie)
         } yield contents
       }
       .refineToOrDie[IOException]
@@ -86,7 +99,16 @@ object CatAcquireRelease extends ZIOAppDefault {
     * that cannot fail to close the file, no matter what happens during reading.
     */
   def readFile(file: String): ZIO[Any, IOException, String] =
-    ???
+    ZIO.acquireReleaseWith {
+      ZIO.debug("ACQUIRE") *>
+        open(file) // acquire
+    } { source =>
+      ZIO.debug("RELEASE") *>
+        close(source).orDie // release
+    } { source =>
+      ZIO.debug("USE") *>
+        ZIO.attemptBlockingIO(source.mkString) // use that resource
+    }
 
   val run =
     for {
@@ -97,7 +119,101 @@ object CatAcquireRelease extends ZIOAppDefault {
       contents <- readFile(fileName)
       _        <- Console.printLine(contents)
     } yield ()
+}
 
+final case class Skope(finalizers: Ref[List[UIO[Any]]]) {
+  def addFinalizer(finalizer: UIO[Any]): UIO[Unit] =
+    finalizers.update(finalizer :: _)
+
+  val closeAll: UIO[Unit] =
+    finalizers.get.flatMap { finalizers =>
+      ZIO.collectAllDiscard(finalizers)
+    }
+}
+
+object Skope {
+  def make: UIO[Skope] =
+    Ref.make(List.empty[UIO[Any]]).map(Skope(_))
+}
+
+object SkopeExample extends ZIOAppDefault {
+
+  import java.io.IOException
+
+  import scala.io.Source
+
+  final class ZSource private (private val source: Source) {
+    def execute[T](f: Source => T): ZIO[Any, IOException, T] =
+      ZIO.attemptBlockingIO(f(source))
+  }
+
+  def acquireRelease[R, E, A](acquire: ZIO[R, E, A])(release: A => UIO[Any]): ZIO[R with Skope, E, A] =
+    ZIO.uninterruptible {
+      for {
+        skope <- ZIO.service[Skope]
+        a     <- acquire
+        _     <- skope.addFinalizer(release(a))
+      } yield a
+    }
+
+  def skoped[R: Tag, E, A](zio: ZIO[Skope with R, E, A]): ZIO[R, E, A] =
+    for {
+      skope <- Skope.make
+      a     <- zio.provideSome[R](ZLayer.succeed(skope)).ensuring(skope.closeAll)
+    } yield a
+
+  object ZSource {
+
+    /** EXERCISE
+      *
+      * Use the `ZIO.acquireRelease` constructor to make a scoped effect that
+      * succeeds with a `ZSource`, whose finalizer will close the opened
+      * resource.
+      */
+    def make(file: String): ZIO[Skope, IOException, ZSource] = {
+      // An effect that acquires the resource:
+      val open =
+        ZIO.debug(s"OPENING SOURCE $file") *>
+          ZIO.attemptBlockingIO(new ZSource(Source.fromFile(file)))
+
+      // A function that, when given the resource, returns an effect that
+      // releases the resource:
+      val close: ZSource => ZIO[Any, Nothing, Unit] =
+        source =>
+          ZIO.debug(s"CLOSING SOURCE $file") *>
+            source.execute(_.close()).orDie
+
+      acquireRelease(open)(close)
+    }
+  }
+
+  /** EXERCISE
+    *
+    * Using `ZSource.make`, as well as `ZIO.scoped` (to define the scope in
+    * which resources are open), read the contents of the specified file into a
+    * `String`.
+    */
+  def readFile(file: String): ZIO[Any, IOException, String] =
+    skoped {
+      for {
+        source   <- ZSource.make(file)
+        contents <- source.execute(_.mkString)
+      } yield contents
+    }
+
+  /** EXERCISE
+    *
+    * Write an app that dumps the contents of the files specified by the
+    * command-line arguments to standard out.
+    */
+  val run =
+    for {
+      args <- getArgs
+      _ <-
+        ZIO.foreachDiscard(args) { arg =>
+          readFile(arg).debug("CONTENT")
+        }
+    } yield ()
 }
 
 object SourceScoped extends ZIOAppDefault {
@@ -121,14 +237,18 @@ object SourceScoped extends ZIOAppDefault {
       */
     def make(file: String): ZIO[Scope, IOException, ZSource] = {
       // An effect that acquires the resource:
-      val open = ZIO.attemptBlockingIO(new ZSource(Source.fromFile(file)))
+      val open =
+        ZIO.debug(s"OPENING SOURCE $file") *>
+          ZIO.attemptBlockingIO(new ZSource(Source.fromFile(file)))
 
       // A function that, when given the resource, returns an effect that
       // releases the resource:
       val close: ZSource => ZIO[Any, Nothing, Unit] =
-        _.execute(_.close()).orDie
+        source =>
+          ZIO.debug(s"CLOSING SOURCE $file") *>
+            source.execute(_.close()).orDie
 
-      ???
+      ZIO.acquireRelease(open)(close)
     }
   }
 
@@ -139,7 +259,12 @@ object SourceScoped extends ZIOAppDefault {
     * `String`.
     */
   def readFile(file: String): ZIO[Any, IOException, String] =
-    ???
+    ZIO.scoped {
+      for {
+        source   <- ZSource.make(file)
+        contents <- source.execute(_.mkString)
+      } yield contents
+    }
 
   /** EXERCISE
     *
@@ -147,7 +272,13 @@ object SourceScoped extends ZIOAppDefault {
     * command-line arguments to standard out.
     */
   val run =
-    ???
+    for {
+      args <- getArgs
+      _ <-
+        ZIO.foreachDiscard(args) { arg =>
+          readFile(arg).debug("CONTENT")
+        }
+    } yield ()
 }
 
 object CatIncremental extends ZIOAppDefault {

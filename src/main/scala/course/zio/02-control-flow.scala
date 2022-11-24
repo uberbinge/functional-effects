@@ -166,7 +166,11 @@ object Iterate extends ZIOAppDefault {
     * evaluates to false, returning the "last" value of type `A`.
     */
   def iterate[R, E, A](start: A)(cond: A => Boolean)(f: A => ZIO[R, E, A]): ZIO[R, E, A] =
-    ???
+    if (!cond(start)) ZIO.succeed(start)
+    else
+      f(start).flatMap { a =>
+        iterate(a)(cond)(f)
+      }
 
   val run =
     iterate(0)(_ < 100) { i =>
@@ -197,13 +201,13 @@ object TailRecursive extends ZIOAppDefault {
     * Make this infinite loop (which represents a webserver) effectfully tail
     * recursive.
     */
-  def webserver: Task[Nothing] =
+  def webserver: Task[Nothing] = {
     for {
       request  <- acceptRequest
       response <- handleRequest(request)
       _        <- request.returnResponse(response)
-      nothing  <- webserver
-    } yield nothing
+    } yield ()
+  }.forever
 
   val run =
     for {
