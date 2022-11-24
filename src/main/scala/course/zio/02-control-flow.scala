@@ -8,14 +8,28 @@ object Looping extends ZIOAppDefault {
 
   /** EXERCISE
     *
-    * Implement a `repeat` combinator using `flatMap` (or `zipRight`) and
-    * recursion.
+    * Implement a `repeat` combinator using `flatMap` and recursion.
     */
-  def repeat[R, E, A](n: Int)(effect: ZIO[R, E, A]): ZIO[R, E, Chunk[A]] =
-    ???
+  def repeat[R, E, A](n: Int)(effect: ZIO[R, E, A]): ZIO[R, E, Chunk[A]] = {
+    def loop(n: Int, acc: Chunk[A]): ZIO[R, E, Chunk[A]] =
+      if (n <= 0) ZIO.succeed(acc)
+      else effect.flatMap(i => loop(n - 1, acc.appended(i)))
+
+    loop(n, Chunk.empty)
+  }
+
+//  def repeat3[R, E, A](n: Int)(effect: ZIO[R, E, A]): ZIO[R, E, Chunk[A]] = {
+//    for {
+//      result <- effect
+//      next   <- repeat(n - 1)(effect)
+//    } yield Chunk(result) ++ next
+//  }.when(n > 0).someOrElse(Chunk.empty[A])
 
   val run =
-    repeat(100)(Console.printLine("All work and no play makes Jack a dull boy"))
+    repeat(2)(
+      Random.nextIntBounded(1000).debug("WHEE")
+    )
+      .debug("RESULT")
 }
 
 object Interview extends ZIOAppDefault {
@@ -36,8 +50,13 @@ object Interview extends ZIOAppDefault {
     */
   def getAllAnswers(questions: List[String]): ZIO[Any, IOException, List[String]] =
     questions match {
-      case Nil     => ???
-      case q :: qs => ???
+      case Nil => ZIO.succeed(List.empty)
+      case question :: questions =>
+        for {
+          answer  <- Console.readLine(question)
+          answers <- getAllAnswers(questions)
+        } yield answer :: answers
+
     }
 
   /** EXERCISE
@@ -46,7 +65,7 @@ object Interview extends ZIOAppDefault {
     * `questions`, to ask the user a bunch of questions, and print the answers.
     */
   val run =
-    ???
+    getAllAnswers(questions).debug("ANSWERS")
 }
 
 object InterviewGeneric extends ZIOAppDefault {
@@ -64,8 +83,12 @@ object InterviewGeneric extends ZIOAppDefault {
     */
   def iterateAndCollect[R, E, A, B](as: List[A])(f: A => ZIO[R, E, B]): ZIO[R, E, List[B]] =
     as match {
-      case Nil     => ???
-      case a :: as => ???
+      case Nil => ZIO.succeed(List.empty)
+      case a :: as =>
+        for {
+          b  <- f(a)
+          bs <- iterateAndCollect(as)(f)
+        } yield b :: bs
     }
 
   /** EXERCISE
@@ -74,7 +97,9 @@ object InterviewGeneric extends ZIOAppDefault {
     * `getAllAnswers`.
     */
   val run =
-    ???
+    iterateAndCollect(questions) { question =>
+      Console.readLine(question)
+    }.debug
 }
 
 object InterviewForeach extends ZIOAppDefault {
@@ -93,7 +118,9 @@ object InterviewForeach extends ZIOAppDefault {
     * print out the contents of the collection.
     */
   val run =
-    ???
+    ZIO.foreach(questions) { question =>
+      Console.readLine(question)
+    }
 }
 
 object WhileLoop extends ZIOAppDefault {
@@ -104,7 +131,15 @@ object WhileLoop extends ZIOAppDefault {
     * runs correctly.
     */
   def whileLoop[R, E, A](cond: UIO[Boolean])(zio: ZIO[R, E, A]): ZIO[R, E, Chunk[A]] =
-    ???
+    cond.flatMap { bool =>
+      if (bool)
+        for {
+          a  <- zio
+          as <- whileLoop(cond)(zio)
+        } yield as.prepended(a)
+      else
+        ZIO.succeed(Chunk.empty)
+    }
 
   val run = {
     def loop(variable: Ref[Int]) =
@@ -113,12 +148,12 @@ object WhileLoop extends ZIOAppDefault {
           value <- variable.get
           _     <- Console.printLine(s"At iteration: $value")
           _     <- variable.update(_ + 1)
-        } yield ()
+        } yield value
       }
 
     for {
       variable <- Ref.make(0)
-      _        <- loop(variable)
+      _        <- loop(variable).debug("WHEE")
     } yield ()
   }
 }
@@ -145,10 +180,12 @@ object TailRecursive extends ZIOAppDefault {
     def returnResponse(response: Response): Task[Unit]
   }
 
-  lazy val acceptRequest: Task[Request] = ZIO.attempt(new Request {
-    def returnResponse(response: Response): Task[Unit] =
-      ZIO.attempt(println(s"Returning response $response"))
-  })
+  lazy val acceptRequest: Task[Request] = ZIO.attempt {
+    new Request {
+      def returnResponse(response: Response): Task[Unit] =
+        ZIO.attempt(println(s"Returning response $response"))
+    }
+  }
 
   def handleRequest(request: Request): Task[Response] = ZIO.attempt {
     println(s"Handling request $request")

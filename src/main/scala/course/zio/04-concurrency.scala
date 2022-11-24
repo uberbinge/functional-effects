@@ -2,10 +2,12 @@ package course.zio
 
 import zio._
 
+import java.util.UUID
+
 object ForkJoin extends ZIOAppDefault {
 
   val printer =
-    Console.printLine(".").repeat(Schedule.recurs(10))
+    Console.printLine(".").repeatN(10)
 
   /** EXERCISE
     *
@@ -20,7 +22,7 @@ object ForkJoin extends ZIOAppDefault {
 object ForkInterrupt extends ZIOAppDefault {
 
   val infinitePrinter =
-    Console.printLine(".").forever
+    Console.print(".").delay(200.millis).forever
 
   /** EXERCISE
     *
@@ -44,9 +46,8 @@ object ParallelFib extends ZIOAppDefault {
       if (n <= 1)
         ZIO.succeed(BigInt(n)).delay(1.second)
       else
-        ZIO.suspendSucceed {
+        ZIO.debug(s"slowFib($n)") *>
           loop(n - 1, original).zipWith(loop(n - 2, original))(_ + _)
-        }
 
     loop(n, n)
   }
@@ -152,9 +153,6 @@ object ParallelZip extends ZIOAppDefault {
 object RefExample extends ZIOAppDefault {
   import zio.Random._
 
-  import zio.Clock._
-  import zio.stm._
-
   /** Some state to keep track of all points inside a circle, and total number
     * of points.
     */
@@ -184,7 +182,8 @@ object RefExample extends ZIOAppDefault {
     * the point is inside the circle then increment `PiState#inside`. In any
     * case, increment `PiState#total`.
     */
-  def addPoint(point: (Double, Double), piState: PiState): UIO[Unit] = ???
+  def addPoint(point: (Double, Double), piState: PiState): UIO[Unit] =
+    ???
 
   /** EXERCISE
     *
@@ -195,12 +194,79 @@ object RefExample extends ZIOAppDefault {
     ???
 }
 
+object InteractiveExerciseToolExample extends ZIOAppDefault {
+
+  final case class UserId(value: UUID)      extends AnyVal
+  final case class Submission(code: String) extends AnyVal
+
+  final case class State(
+      submissions: Map[UserId, Submission]
+  ) {
+    def submit(userId: UserId, submission: Submission): State =
+      copy(submissions = submissions + (userId -> submission))
+
+    def size: Int = submissions.size
+  }
+
+  object State {
+    val empty = State(Map.empty)
+  }
+
+  trait SubmissionService {
+    def addSubmission(userId: UserId, submission: Submission): UIO[Unit]
+    def clearAll: UIO[Unit]
+    def submissionCount: UIO[Int]
+  }
+
+  final case class SubmissionServiceVar() extends SubmissionService {
+    var state = State.empty
+
+    def addSubmission(userId: UserId, submission: Submission): UIO[Unit] =
+      ZIO.succeed {
+        state = state.submit(userId, submission)
+      }
+
+    def clearAll: UIO[Unit] =
+      ZIO.succeed {
+        state = State.empty
+      }
+
+    def submissionCount: UIO[Int] =
+      ZIO.succeed {
+        state.size
+      }
+  }
+
+  final case class SubmissionServiceLive(ref: Ref[State]) {
+    def addSubmission(userId: UserId, submission: Submission): UIO[Unit] =
+      ???
+
+    def clearAll: UIO[Unit] =
+      ???
+
+    def submissionCount: UIO[Int] =
+      ???
+  }
+
+  val exampleCode =
+    Vector("foo.bar", "println(\"hello world!\")", "ZIO.succeed(42)", "???")
+
+  def randomUserSubmission: UIO[(UserId, Submission)] =
+    for {
+      userId <- Random.nextUUID.map(UserId)
+      code   <- Random.nextIntBounded(exampleCode.size).map(exampleCode)
+    } yield (userId, Submission(code))
+
+  val run =
+    ???
+}
+
 object PromiseExample extends ZIOAppDefault {
 
   /** EXERCISE
     *
-    * Do some computation that produces an integer. When yare done, complete the
-    * promise with `Promise#succeed`.
+    * Do some computation that produces an integer. When you're done, complete
+    * the promise with `Promise#succeed`.
     */
   def doCompute(result: Promise[Nothing, Int]): UIO[Unit] = ???
 
@@ -226,6 +292,7 @@ object FiberRefExample extends ZIOAppDefault {
   def makeChild(ref: FiberRef[Int]) =
     for {
       _ <- ref.get.debug("child initial value")
+      _ <- ref.update(_ + 1)
       _ <- ref.get.debug("child after update")
     } yield ()
 
@@ -238,4 +305,8 @@ object FiberRefExample extends ZIOAppDefault {
       _     <- child.join
       _     <- ref.get.debug("parent after join")
     } yield ()
+}
+
+object CustomLoggerWithSpans extends ZIOAppDefault {
+  val run = ???
 }
