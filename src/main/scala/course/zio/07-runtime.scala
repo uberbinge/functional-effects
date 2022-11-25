@@ -1,22 +1,24 @@
 package course.zio
 
 import zio._
+
 import scala.concurrent.ExecutionContext
 import java.io.IOException
 
 object CustomRuntime {
+  final case class AppConfig(name: String)
+
   val defaultEnvironment  = ZEnvironment.empty
   val defaultRuntimeFlags = RuntimeFlags.default
   val defaultFiberRefs    = FiberRefs.empty
-
-  final case class AppConfig(name: String)
 
   /** EXERCISE
     *
     * Create a custom runtime that bundles a value of type `AppConfig` into the
     * environment.
     */
-  lazy val customRuntime = Runtime(defaultEnvironment, defaultFiberRefs, defaultRuntimeFlags)
+  lazy val customRuntime: Runtime[Any] =
+    Runtime(defaultEnvironment, defaultFiberRefs, defaultRuntimeFlags)
 
   val program: ZIO[AppConfig, IOException, Unit] =
     for {
@@ -29,8 +31,8 @@ object CustomRuntime {
 
   /** EXERCISE
     *
-    * Using the `run` method of the custom runtime you created, execute the
-    * `program` effect above.
+    * Using the `unsafe.run` method of the custom runtime you created, execute
+    * the `program` effect above.
     *
     * NOTE: You will have to use `Unsafe.unsafe { implicit u => ... }` or
     * `Unsafe.unsafe { ... }` (Scala 3) in order to call `run`.
@@ -48,7 +50,8 @@ object ThreadPool extends ZIOAppDefault {
     * Using `ZIO#onExecutor`, write an `onDatabase` combinator that runs the
     * specified effect on the database thread pool.
     */
-  def onDatabase[R, E, A](zio: ZIO[R, E, A]): ZIO[R, E, A] = ???
+  def onDatabase[R, E, A](zio: ZIO[R, E, A]): ZIO[R, E, A] =
+    ???
 
   /** EXERCISE
     *
@@ -75,15 +78,15 @@ object ThreadPool extends ZIOAppDefault {
     * determine which threads are executing which effects.
     */
   val run =
-    Console.printLine("Main") *>
+    ZIO.debug("Main") *>
       onDatabase {
-        Console.printLine("Database") *>
+        ZIO.debug("Database") *>
           ZIO.blocking {
-            Console.printLine("Blocking")
+            ZIO.debug("Blocking")
           } *>
-          Console.printLine("Database")
+          ZIO.debug("Database")
       } *>
-      Console.printLine("Main")
+      ZIO.debug("Main")
 }
 
 object CustomLogger {
@@ -110,3 +113,22 @@ object CustomLogger {
   val run =
     ZIO.log("Hello World!")
 }
+
+// ALSO: https://github.com/mlangc/zio-interop-log4j2
+//
+//object MDCInterop {
+//  def withLoggingContext[A](eff: => A): ZIO[Any, Throwable, A] =
+//    ZIO.logAnnotations.flatMap { ctx =>
+//      ZIO.attempt {
+//        import scala.jdk.CollectionConverters._
+//        val previous =
+//          Option(MDC.getCopyOfContextMap().asScala)
+//            .getOrElse(Map.empty[String, String])
+//
+//        try {
+//          ctx.renderContext.foreach((MDC.put _).tupled)
+//          eff
+//        } finally MDC.setContextMap(previous.asJava)
+//      }
+//    }
+//}

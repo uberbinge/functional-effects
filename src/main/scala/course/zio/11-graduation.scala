@@ -6,38 +6,38 @@ import java.nio.charset.StandardCharsets
 
 object Sharding extends ZIOAppDefault {
 
-  /**
-   * EXERCISE
-   *
-   * Create N workers reading from a Queue, if one of them fails, then wait
-   * for the other ones to process their current item, but terminate all the
-   * workers.
-   *
-   * Return the first error, or never return, if there is no error.
-   */
+  /** EXERCISE
+    *
+    * Create N workers reading from a Queue, if one of them fails, then wait for
+    * the other ones to process their current item, but terminate all the
+    * workers.
+    *
+    * Return the first error, or never return, if there is no error.
+    */
   def shard[R, E, A](
-    queue: Queue[A],
-    n: Int,
-    worker: A => ZIO[R, E, Unit]
-  ): ZIO[R, Nothing, E] = ???
+      queue: Queue[A],
+      n: Int,
+      worker: A => ZIO[R, E, Unit]
+  ): ZIO[R, Nothing, E] =
+    ???
 
   val run = {
     def makeWorker(ref: Ref[Int]): Int => ZIO[Any, String, Unit] =
       (work: Int) =>
         for {
-          count <- ref.get
-          _ <- if (count < 100) Console.printLine(s"Worker is processing item ${work} after ${count}").orDie
-              else ZIO.fail(s"Uh oh, failed processing ${work} after ${count}")
-          _ <- ref.update(_ + 1)
+          _     <- ZIO.sleep(100.millis)
+          count <- ref.getAndUpdate(_ + 1)
+          _ <- if (count != 100) Console.printLine(s"Worker is processing item $work after $count").orDie
+               else ZIO.fail(s"Uh oh, failed processing $work after $count")
         } yield ()
 
-    (for {
+    for {
       queue <- Queue.bounded[Int](100)
       ref   <- Ref.make(0)
       _     <- queue.offer(1).forever.fork
       error <- shard(queue, 10, makeWorker(ref))
-      _     <- Console.printLine(s"Failed with ${error}")
-    } yield ())
+      _     <- Console.printLine(s"Failed with $error")
+    } yield ()
   }
 }
 
@@ -51,12 +51,11 @@ object SimpleActor extends ZIOAppDefault {
 
   type TemperatureActor = Command => Task[Double]
 
-  /**
-   * EXERCISE
-   *
-   * Using ZIO Queue and Promise, implement the logic necessary to create an
-   * actor as a function from `Command` to `Task[Double]`.
-   */
+  /** EXERCISE
+    *
+    * Using ZIO Queue and Promise, implement the logic necessary to create an
+    * actor as a function from `Command` to `Task[Double]`.
+    */
   def makeActor(initialTemperature: Double): UIO[TemperatureActor] = {
     type Bundle = (Command, Promise[Nothing, Double])
 
@@ -66,41 +65,57 @@ object SimpleActor extends ZIOAppDefault {
   val run = {
     val temperatures = (0 to 100).map(_.toDouble)
 
-    (for {
+    for {
       actor <- makeActor(0)
-      _ <- ZIO.foreachPar(temperatures) { temp =>
-            actor(AdjustTemperature(temp))
-          }
+      _ <- ZIO.foreachParDiscard(temperatures) { temp =>
+             actor(AdjustTemperature(temp))
+           }
       temp <- actor(ReadTemperature)
-      _    <- Console.printLine(s"Final temperature is ${temp}")
-    } yield ())
+      _    <- Console.printLine(s"Final temperature is $temp")
+    } yield ()
   }
 }
 
 object parallel_web_crawler {
 
   import zio.Clock._
+  import scala.io.Source
 
   trait Web {
     def getURL(url: URL): IO[Exception, String]
   }
-  object Web {
 
-    /**
-     * EXERCISE
-     *
-     * Implement a layer for `Web` that uses the `ZIO.attemptBlockingIO` combinator
-     * to safely wrap `Source.fromURL` into a functional effect.
-     */
-    val live: ZLayer[Any, Nothing, Web] = ???
+  final case class WebLive() extends Web {
+
+    /** EXERCISE
+      *
+      * Implement `getUrl` using the `ZIO.attemptBlockingIO` and
+      * `ZIO.acquireReleaseWith` combinators to safely wrap `Source.fromURL`
+      * into a functional effect.
+      */
+    def getURL(url: URL): IO[Exception, String] =
+      ZIO.acquireReleaseWith {
+        ZIO.attemptBlockingIO(Source.fromURL(url.url))
+      } { source =>
+        ZIO.attemptBlockingIO(source.close()).orDie
+      } { source =>
+        ZIO.attemptBlockingIO(source.mkString)
+      }
+
   }
 
-  /**
-   * EXERCISE
-   *
-   * Using `ZIO.accessM`, delegate to the `Web` module's `getURL` function.
-   */
-  def getURL(url: URL): ZIO[Web, Exception, String] = ???
+  object Web {
+    val live: ZLayer[Any, Nothing, Web] =
+      ZLayer.succeed(WebLive())
+  }
+
+  /** EXERCISE
+    *
+    * Using `ZIO.serviceWithZIO`, delegate to the `Web` module's `getURL`
+    * function.
+    */
+  def getURL(url: URL): ZIO[Web, Exception, String] =
+    ZIO.serviceWithZIO(_.getURL(url))
 
   final case class CrawlState[+E](visited: Set[URL], errors: List[E]) {
     final def visitAll(urls: Set[URL]): CrawlState[E] = copy(visited = visited ++ urls)
@@ -108,26 +123,24 @@ object parallel_web_crawler {
     final def logError[E1 >: E](e: E1): CrawlState[E1] = copy(errors = e :: errors)
   }
 
-  /**
-   * EXERCISE
-   *
-   * Implement the `crawl` function using the helpers provided in this object.
-   *
-   * {{{
-   * def getURL(url: URL): ZIO[Blocking, Exception, String]
-   * def extractURLs(root: URL, html: String): List[URL]
-   * }}}
-   */
+  /** EXERCISE
+    *
+    * Implement the `crawl` function using the helpers provided in this object.
+    *
+    * {{{
+    * def getURL(url: URL): ZIO[Blocking, Exception, String]
+    * def extractURLs(root: URL, html: String): List[URL]
+    * }}}
+    */
   def crawl[E](
-    seeds: Set[URL],
-    router: URL => Set[URL],
-    processor: (URL, String) => IO[E, Unit]
+      seeds: Set[URL],
+      router: URL => Set[URL],
+      processor: (URL, String) => IO[E, Unit]
   ): ZIO[Web with Clock, Nothing, List[E]] = {
     val emptySet = ZIO.succeed(Set.empty[URL])
 
     def loop(seeds: Set[URL], ref: Ref[CrawlState[E]]): ZIO[Web with Clock, Nothing, Unit] =
-      if (seeds.isEmpty) ZIO.unit
-      else ???
+      ???
 
     for {
       ref   <- Ref.make[CrawlState[E]](CrawlState(seeds, Nil))
@@ -136,20 +149,21 @@ object parallel_web_crawler {
     } yield state.errors
   }
 
-  /**
-   * A data structure representing a structured URL, with a smart constructor.
-   */
+  /** A data structure representing a structured URL, with a smart constructor.
+    */
   final case class URL private (parsed: io.lemonlabs.uri.Url) {
     import io.lemonlabs.uri._
 
     final def relative(page: String): Option[URL] =
-      scala.util.Try {
-        val parts = parsed.path.parts
+      scala.util
+        .Try {
+          val parts = parsed.path.parts
 
-        val whole = parts.dropRight(1) :+ page.dropWhile(_ == '/')
+          val whole = parts.dropRight(1) :+ page.dropWhile(_ == '/')
 
-        parsed.withPath(UrlPath(whole))
-      }.toOption
+          parsed.withPath(UrlPath(whole))
+        }
+        .toOption
         .map(new URL(_))
 
     def url: String = parsed.toString
@@ -172,21 +186,20 @@ object parallel_web_crawler {
       }
   }
 
-  /**
-   * A function that extracts URLs from a given web page.
-   */
+  /** A function that extracts URLs from a given web page.
+    */
   def extractURLs(root: URL, html: String): List[URL] = {
     val pattern = "href=[\"\']([^\"\']+)[\"\']".r
 
     scala.util
-      .Try({
+      .Try {
         val matches = (for (m <- pattern.findAllMatchIn(html)) yield m.group(1)).toList
 
         for {
           m   <- matches
           url <- URL.make(m).toList ++ root.relative(m).toList
         } yield url
-      })
+      }
       .getOrElse(Nil)
   }
 
@@ -204,11 +217,10 @@ object parallel_web_crawler {
         About         -> """<html><body><a href="home.html">Home</a><a href="http://google.com">Google</a></body></html>"""
       )
 
-    /**
-     * EXERCISE
-     *
-     * Implement a test layer using the SiteIndex data.
-     */
+    /** EXERCISE
+      *
+      * Implement a test layer using the SiteIndex data.
+      */
     val testLayer: ZLayer[Any, Nothing, Web] = ???
 
     val TestRouter: URL => Set[URL] =
@@ -218,12 +230,11 @@ object parallel_web_crawler {
       (url, html) => ZIO.succeed(List(url -> html))
   }
 
-  /**
-   * EXERCISE
-   *
-   * Run your test crawler using the test data, supplying it the custom layer
-   * it needs.
-   */
+  /** EXERCISE
+    *
+    * Run your test crawler using the test data, supplying it the custom layer
+    * it needs.
+    */
   val run =
     Console.printLine("Hello World!")
 }
@@ -234,48 +245,40 @@ object Hangman extends ZIOAppDefault {
   import zio.Random._
   import java.io.IOException
 
-  /**
-   * EXERCISE
-   *
-   * Implement an effect that gets a single, lower-case character from
-   * the user.
-   */
+  /** EXERCISE
+    *
+    * Implement an effect that gets a single, lower-case character from the
+    * user.
+    */
   lazy val getChoice: ZIO[Any, IOException, Char] = ???
 
-  /**
-   * EXERCISE
-   *
-   * Implement an effect that prompts the user for their name, and
-   * returns it.
-   */
+  /** EXERCISE
+    *
+    * Implement an effect that prompts the user for their name, and returns it.
+    */
   lazy val getName: ZIO[Any, IOException, String] = ???
 
-  /**
-   * EXERCISE
-   *
-   * Implement an effect that chooses a random word from the dictionary.
-   * The dictionary is `Dictionary.Dictionary`.
-   */
+  /** EXERCISE
+    *
+    * Implement an effect that chooses a random word from the dictionary. The
+    * dictionary is `Dictionary.Dictionary`.
+    */
   lazy val chooseWord: ZIO[Any, Nothing, String] = ???
 
-  /**
-   * EXERCISE
-   *
-   * Implement the main game loop, which gets choices from the user until
-   * the game is won or lost.
-   */
+  /** EXERCISE
+    *
+    * Implement the main game loop, which gets choices from the user until the
+    * game is won or lost.
+    */
   def gameLoop(oldState: State): ZIO[Any, IOException, Unit] = ???
 
   def renderState(state: State): ZIO[Any, IOException, Unit] = {
 
-    /**
-     *
-     *  f     n  c  t  o
-     *  -  -  -  -  -  -  -
-     *
-     *  Guesses: a, z, y, x
-     *
-     */
+    /** f n c t o
+      *   - - - - - - -
+      *
+      * Guesses: a, z, y, x
+      */
     val word =
       state.word.toList
         .map(c => if (state.guesses.contains(c)) s" $c " else "   ")
@@ -310,9 +313,9 @@ object Hangman extends ZIOAppDefault {
   }
 
   def analyzeNewInput(
-    oldState: State,
-    newState: State,
-    char: Char
+      oldState: State,
+      newState: State,
+      char: Char
   ): GuessResult =
     if (oldState.guesses.contains(char)) GuessResult.Unchanged
     else if (newState.playerWon) GuessResult.Won
@@ -320,18 +323,17 @@ object Hangman extends ZIOAppDefault {
     else if (oldState.word.contains(char)) GuessResult.Correct
     else GuessResult.Incorrect
 
-  /**
-   * EXERCISE
-   *
-   * Execute the main function and verify your program works as intended.
-   */
+  /** EXERCISE
+    *
+    * Execute the main function and verify your program works as intended.
+    */
   val run = {
     for {
-      name  <- getName
-      word  <- chooseWord
+      name <- getName
+      word <- chooseWord
       state = State(name, Set(), word)
-      _     <- renderState(state)
-      _     <- gameLoop(state)
+      _    <- renderState(state)
+      _    <- gameLoop(state)
     } yield ()
   }
 }
@@ -352,15 +354,13 @@ object TicTacToe extends ZIOAppDefault {
 
   final case class Board private (value: Vector[Vector[Option[Mark]]]) {
 
-    /**
-     * Retrieves the mark at the specified row/col.
-     */
+    /** Retrieves the mark at the specified row/col.
+      */
     final def get(row: Int, col: Int): Option[Mark] =
       value.lift(row).flatMap(_.lift(col)).flatten
 
-    /**
-     * Places a mark on the board at the specified row/col.
-     */
+    /** Places a mark on the board at the specified row/col.
+      */
     final def place(row: Int, col: Int, mark: Mark): Option[Board] =
       if (row >= 0 && col >= 0 && row < 3 && col < 3)
         Some(
@@ -368,17 +368,15 @@ object TicTacToe extends ZIOAppDefault {
         )
       else None
 
-    /**
-     * Renders the board to a string.
-     */
+    /** Renders the board to a string.
+      */
     def render: String =
       value
         .map(_.map(_.fold(" ")(_.render)).mkString(" ", " | ", " "))
         .mkString("\n---|---|---\n")
 
-    /**
-     * Returns which mark won the game, if any.
-     */
+    /** Returns which mark won the game, if any.
+      */
     final def won: Option[Mark] =
       if (wonBy(Mark.X)) Some(Mark.X)
       else if (wonBy(Mark.O)) Some(Mark.O)
@@ -395,20 +393,20 @@ object TicTacToe extends ZIOAppDefault {
         wonBy(0, 2, 1, 0, mark)
 
     private final def wonBy(
-      row0: Int,
-      col0: Int,
-      rowInc: Int,
-      colInc: Int,
-      mark: Mark
+        row0: Int,
+        col0: Int,
+        rowInc: Int,
+        colInc: Int,
+        mark: Mark
     ): Boolean =
       extractLine(row0, col0, rowInc, colInc).collect { case Some(v) => v }.toList == List
         .fill(3)(mark)
 
     private final def extractLine(
-      row0: Int,
-      col0: Int,
-      rowInc: Int,
-      colInc: Int
+        row0: Int,
+        col0: Int,
+        rowInc: Int,
+        colInc: Int
     ): Iterable[Option[Mark]] =
       for {
         i <- 0 to 2
@@ -418,9 +416,9 @@ object TicTacToe extends ZIOAppDefault {
     final val empty = new Board(Vector.fill(3)(Vector.fill(3)(None)))
 
     def fromChars(
-      first: Iterable[Char],
-      second: Iterable[Char],
-      third: Iterable[Char]
+        first: Iterable[Char],
+        second: Iterable[Char],
+        third: Iterable[Char]
     ): Option[Board] =
       if (first.size != 3 || second.size != 3 || third.size != 3) None
       else {
@@ -450,12 +448,11 @@ object TicTacToe extends ZIOAppDefault {
     .get
     .render
 
-  /**
-   * EXERCISE
-   *
-   * Implement a game of tic-tac-toe, where the player gets to play against a
-   * computer opponent.
-   */
+  /** EXERCISE
+    *
+    * Implement a game of tic-tac-toe, where the player gets to play against a
+    * computer opponent.
+    */
   val run =
     Console.printLine(TestBoard)
 }

@@ -26,7 +26,6 @@ object ForkJoin extends ZIOAppDefault {
   // 2
   // main fiber = printer.fork -> debug -> await
   // side fiber =             |           . . . . . . . . . . . . .
-  // TODO: Explore more what yield does w/r/t the fiber we're running on
   val run =
     for {
       _ <- ZIO.fiberId.debug
