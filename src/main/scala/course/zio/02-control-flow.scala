@@ -11,11 +11,19 @@ object Looping extends ZIOAppDefault {
     * Implement a `repeat` combinator using `flatMap` (or `zipRight`) and
     * recursion.
     */
-  def repeat[R, E, A](n: Int)(effect: ZIO[R, E, A]): ZIO[R, E, Chunk[A]] =
-    ???
+    // From copair
+//  def repeat[R, E, A](n: Int)(effect: ZIO[R, E, A]): ZIO[R, E, Chunk[A]] = for {
+//    a <- effect
+//    b <- if (n > 1) repeat(n - 1)(effect) else ZIO.succeed(Chunk.empty)
+//  } yield a +: b
+def repeat[R, E, A](n: Int)(effect: ZIO[R, E, A]): ZIO[R, E, Chunk[A]] =
+  if (n <= 0)
+    ZIO.succeed(Chunk.empty)
+  else
+    effect.flatMap(a => repeat(n - 1)(effect).map(_.prepended(a)))
 
   val run =
-    repeat(100)(Console.printLine("All work and no play makes Jack a dull boy"))
+    repeat(10)(Console.printLine("All work and no play makes Jack a dull boy")).debug("test")
 }
 
 object Interview extends ZIOAppDefault {
@@ -69,12 +77,13 @@ object InterviewGeneric extends ZIOAppDefault {
     }
 
   /** EXERCISE
-    *
-    * Use `iterateAndCollect` to implement the same functionality as
-    * `getAllAnswers`.
-    */
-  val run =
-    ???
+   *
+   * Use `iterateAndCollect` to implement the same functionality as
+   * `getAllAnswers`.
+   */
+
+  val run = ???
+
 }
 
 object InterviewForeach extends ZIOAppDefault {
@@ -131,7 +140,8 @@ object Iterate extends ZIOAppDefault {
     * evaluates to false, returning the "last" value of type `A`.
     */
   def iterate[R, E, A](start: A)(cond: A => Boolean)(f: A => ZIO[R, E, A]): ZIO[R, E, A] =
-    ???
+    if (cond(start)) f(start).flatMap(a => iterate(a)(cond)(f))
+    else ZIO.succeed(start)
 
   val run =
     iterate(0)(_ < 100) { i =>

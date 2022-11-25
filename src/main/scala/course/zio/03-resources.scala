@@ -168,40 +168,57 @@ object CatIncremental extends ZIOAppDefault {
   }
 
   /** EXERCISE
-    *
-    * Refactor `FileHandle` so that creating it returns a scoped effect, so that
-    * it is impossible to forget to close an open handle.
-    *
-    * HINT: `ZIO.acquireRelease` is the easiest way to do this!
-    */
+   *
+   * Refactor `FileHandle` so that creating it returns a scoped effect, so that
+   * it is impossible to forget to close an open handle.
+   *
+   * HINT: `ZIO.acquireRelease` is the easiest way to do this!
+   */
   object FileHandle {
-    final def open(file: String): ZIO[Any, IOException, FileHandle] =
-      ZIO.attemptBlockingIO(new FileHandle(new FileInputStream(file)))
+    final def open(file: String): ZIO[Scope, IOException, FileHandle] =
+      ZIO.acquireRelease {
+        ZIO.attemptBlockingIO(new FileHandle(new FileInputStream(file)))
+      } {
+        _.close.orDie
+      }
   }
 
   /** EXERCISE
-    *
-    * Implement an incremental version of `cat` that pulls a chunk of bytes at a
-    * time, stopping when there are no more chunks left.
-    */
+   *
+   * Implement an incremental version of `cat` that pulls a chunk of bytes at a
+   * time, stopping when there are no more chunks left.
+   */
   def cat(fh: FileHandle): ZIO[Any, IOException, Unit] =
-    ???
+    ZIO.scoped {
+      (for {
+        chunks <- fh.read.map(_.map(_.asString))
+        _ <- ZIO.whenCase(chunks) {
+          case Some(ch) =>
+            Console.printLine(ch)
+        }
+      } yield chunks)
+        .repeatUntil(_.isEmpty)
+        .unit
+    }
 
   /** EXERCISE
-    *
-    * Implement an incremental version of the `cat` utility, using
-    * `ZIO#acquireRelease` to ensure the file is closed in the event of error or
-    * interruption.
-    */
+   *
+   * Implement an incremental version of the `cat` utility, using
+   * `ZIO#acquireRelease` to ensure the file is closed in the event of error or
+   * interruption.
+   */
   val run =
     getArgs.map(_.toList).flatMap {
       case file :: Nil =>
         /** EXERCISE
-          *
-          * Open the specified file, safely create and use a file handle to
-          * incrementally dump the contents of the file to standard output.
-          */
-        ???
+         *
+         * Open the specified file, safely create and use a file handle to
+         * incrementally dump the contents of the file to standard output.
+         */
+        for {
+          fileHandle <- FileHandle.open(file)
+          _ <- cat(fileHandle)
+        } yield ()
 
       case _ => Console.printLine("Usage: cat <file>")
     }

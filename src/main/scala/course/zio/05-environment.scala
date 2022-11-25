@@ -30,7 +30,7 @@ object TypeIndeedMap extends ZIOAppDefault {
    * (`envLogging`, `envDatabase`, and `envCache`) into a single map that
    * has all three objects.
    */
-  val allThree: ZEnvironment[Database with Cache with Logging] = ???
+  val allThree: ZEnvironment[Database with Cache with Logging] = envLogging ++ envDatabase ++ envCache
 
   /**
    * EXERCISE
@@ -41,9 +41,9 @@ object TypeIndeedMap extends ZIOAppDefault {
    * as it cannot be inferred (the map needs to know which of the objects
    * you want to retrieve, and that can be specified only by type).
    */
-  lazy val logging  = ???
-  lazy val database = ???
-  lazy val cache    = ???
+  lazy val logging  = allThree.get[Logging]
+  lazy val database = allThree.get[Database]
+  lazy val cache    = allThree.get[Cache]
 
   val run = ???
 }
@@ -104,8 +104,8 @@ object ProvideEnvironment extends ZIOAppDefault {
    */
   val run = {
     val config = Config("localhost", 7878)
-
-    ???
+    val zipped = getServer.zip(useDatabaseConnection)
+    zipped.debug(wholenv)
   }
 }
 

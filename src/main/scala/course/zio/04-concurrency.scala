@@ -5,7 +5,7 @@ import zio._
 object ForkJoin extends ZIOAppDefault {
 
   val printer =
-    Console.printLine(".").repeat(Schedule.recurs(10))
+    Console.print(".").delay(Duration.fromMillis(200)).repeat(Schedule.recurs(10))
 
   /** EXERCISE
     *
@@ -13,8 +13,13 @@ object ForkJoin extends ZIOAppDefault {
     * out a message, "Forked", then join the fiber using `Fiber#join`, and
     * finally, print out a message "Joined".
     */
-  val run =
-    printer
+  val run = for {
+    fiber <- printer
+    _     <- Console.printLine("Forked")
+//    _     <- fiber.
+    _ <- Console.printLine("Joined")
+  } yield ()
+
 }
 
 object ForkInterrupt extends ZIOAppDefault {
@@ -124,8 +129,13 @@ object AlarmAppImproved extends ZIOAppDefault {
     * prints a dot every second that the alarm is sleeping for, and then prints
     * out a wakeup alarm message, like "Time to wakeup!!!".
     */
-  val run =
-    ???
+  val run = for {
+    duration <- getAlarmDuration
+    _    <- Console.printLine(".").repeat(Schedule.spaced(1.second)).timeout(duration).fork
+    _        <- ZIO.sleep(duration)
+    _        <- Console.printLine("Time to wakeup!!!")
+  } yield ()
+
 }
 
 object ParallelZip extends ZIOAppDefault {
@@ -151,9 +161,6 @@ object ParallelZip extends ZIOAppDefault {
   */
 object RefExample extends ZIOAppDefault {
   import zio.Random._
-
-  import zio.Clock._
-  import zio.stm._
 
   /** Some state to keep track of all points inside a circle, and total number
     * of points.

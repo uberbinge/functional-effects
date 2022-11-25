@@ -62,8 +62,7 @@ object ErrorShortCircuit extends ZIOAppDefault {
     * Using `ZIO#orElse`, compose the `failed` effect with another effect that
     * succeeds with an exit code.
     */
-  val run =
-    ???
+  val run = ???
 }
 
 object ErrorRecoveryFold extends ZIOAppDefault {
@@ -179,7 +178,7 @@ object ErrorRefinement2 extends ZIOAppDefault {
     */
   lazy val getAlarmDuration: ZIO[Any, IOException, Duration] = {
     def parseDuration(input: String): IO[NumberFormatException, Duration] =
-      ???
+      ZIO.attempt(Duration.fromSeconds(input.toLong)).refineToOrDie[NumberFormatException]
 
     def fallback(input: String): ZIO[Any, IOException, Duration] =
       Console.printLine(s"The input $input is not valid.") *> getAlarmDuration
@@ -197,8 +196,12 @@ object ErrorRefinement2 extends ZIOAppDefault {
     * sleeps the specified number of seconds using `ZIO.sleep(d)`, and then
     * prints out a wakeup alarm message, like "Time to wakeup!!!".
     */
-  val run =
-    ???
+  val run = for {
+    sleep <- getAlarmDuration
+    _ <- ZIO.sleep(sleep)
+    _ <- Console.printLine("Time to wake up")
+  } yield ()
+
 }
 
 object ZIOFinally extends ZIOAppDefault {
